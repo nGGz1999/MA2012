@@ -1,0 +1,154 @@
+#include <Adafruit_NeoPixel.h>
+
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(4, 2, NEO_GRB + NEO_KHZ800);  // Use pin 6 for NeoPixel
+const int numSensors = 5;
+int SensorPins[numSensors] = {A1, A2, A3, A4, A5};  // Analog pins for sensor readings
+int SensorReadings[numSensors];
+int ledPins[numSensors] = {11, 10, 9, 8, 7};
+int alarmPin = 4;  // Alarm on pin 4
+int toggleSwitchPin = 12;  // Toggle switch on pin 12
+bool toggleButtonState = false;  // State of the toggle switch
+const int MCUPSinput6 = 6;
+int MCUPS6state = digitalRead(MCUPSinput6);
+
+unsigned long alarmStartTime = 0;  // Track when alarm condition starts
+const unsigned long alarmDelay = 3000;  // 3 seconds delay
+unsigned long flashStartTime = 0;  // Track flashing interval
+const unsigned long flashInterval = 500;  // Flash every 500 ms
+unsigned long showerStartTime = 0;  // Track when showering time starts
+bool isShowering = false;  // Track if showering time is active
+
+void setup() {
+  Serial.begin(9600);
+  for (int i = 0; i < numSensors; i++) {
+    pinMode(ledPins[i], OUTPUT);
+  }
+  pinMode(alarmPin, OUTPUT);
+  pinMode(toggleSwitchPin, INPUT_PULLUP);  // Set toggle switch pin as input with pull-up resistor
+  pinMode(MCUPSinput6, INPUT);  // Set MCUPS input pin as input
+  strip.begin();  // Initialize NeoPixel strip
+  strip.show();   // Turn off all pixels initially
+}
+
+void loop() {
+  // Check the state of the toggle switch
+  toggleButtonState = digitalRead(toggleSwitchPin) == LOW;
+    Serial.print("MCUPS6state = ");
+    Serial.print(MCUPS6state);
+
+  if (toggleButtonState) {
+    // If toggle switch is closed, turn off the whole circuit
+    for (int i = 0; i < numSensors; i++) {
+      digitalWrite(ledPins[i], LOW);
+    }
+    noTone(alarmPin);
+    strip.clear();
+    strip.show();
+    return;  // Exit the loop to keep the circuit off
+  }
+
+  int litCount = 0;  // Counter for the number of lit LEDs
+
+  // Read sensors and control LEDs
+  for (int i = 0; i < numSensors; i++) {
+    SensorReadings[i] = analogRead(SensorPins[i]);
+
+    Serial.print("Pressure Reading ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.println(SensorReadings[i]);
+
+    // Set corresponding LED state
+    digitalWrite(ledPins[i], SensorReadings[i] >= 200 ? HIGH : LOW);
+
+    if (SensorReadings[i] >= 200) {
+      litCount++;  // Count the number of active sensors
+    }
+  }
+
+  // Start timer for showering time if 1-2 LEDs are lit
+  if (litCount >= 1 && litCount <= 2) {
+    if (showerStartTime == 0) {
+      showerStartTime = millis();
+      isShowering = true;
+    }
+    unsigned long elapsedTime = millis() - showerStartTime;
+
+    if (elapsedTime < 5000) {
+      strip.fill(strip.Color(0, 255, 0));  // Light green for the first 5 seconds
+    } else if (elapsedTime < 10000) {
+      strip.fill(strip.Color(255, 165, 0));  // Light orange from 5 to 10 seconds
+    } else {
+      strip.fill(strip.Color(0, 0, 255));  // Light blue after 10 seconds
+    }
+    strip.show();
+  } else {
+    if (litCount == 0) {
+      showerStartTime = 0;  // Reset the shower timer if no LEDs are lit
+      isShowering = false;
+      strip.clear();  // Ensure the strip is turned off when not in use
+      strip.show();
+    }
+  }
+
+  // Check if MCUPSinput6 is HIGH to stop flashing red light and turn off buzzer
+  if (MCUPS6state == HIGH) {
+    noTone(alarmPin);  // Turn off the alarm
+    strip.clear();  // Turn off the NeoPixel strip
+    strip.show();
+    return;  // Exit the loop to ensure alarm and flashing are stopped
+  }
+
+  // Check if three or more LEDs are lit to activate the alarm and flash NeoPixel strip
+  if (litCount >= 3) {
+    if (isShowering) {
+      // If showering, do not turn off the strip immediately, continue shower mode until alarm starts
+      if (alarmStartTime == 0) {
+        // Record the start time when condition is first met
+        alarmStartTime = millis();
+      } else if (millis() - alarmStartTime >= alarmDelay) {
+        tone(alarmPin, 500, 1000);  // Activate the alarm
+
+        // Flash the NeoPixel strip red using non-blocking timing
+        if (millis() - flashStartTime >= flashInterval) {
+          flashStartTime = millis();
+          if (strip.getPixelColor(0) == 0) {
+            strip.fill(strip.Color(255, 0, 0));  // Set strip to red
+          } else {
+            strip.clear();  // Clear the strip
+          }
+          strip.show();  // Update the strip
+        }
+        isShowering = false;  // End shower mode once alarm starts
+      }
+    } else {
+      if (alarmStartTime == 0) {
+        // Record the start time when condition is first met
+        alarmStartTime = millis();
+      } else if (millis() - alarmStartTime >= alarmDelay) {
+        tone(alarmPin, 500, 1000);  // Activate the alarm
+
+        // Flash the NeoPixel strip red using non-blocking timing
+        if (millis() - flashStartTime >= flashInterval) {
+          flashStartTime = millis();
+          if (strip.getPixelColor(0) == 0) {
+            strip.fill(strip.Color(255, 0, 0));  // Set strip to red
+          } else {
+            strip.clear();  // Clear the strip
+          }
+          strip.show();  // Update the strip
+        }
+      }
+    }
+  } else {
+    // Reset the alarm timer if less than 3 LEDs are lit
+    alarmStartTime = 0;
+    noTone(alarmPin);  // Stop the alarm
+    if (!isShowering) {
+      strip.clear();
+      strip.show();
+    }
+  }
+
+  delay(200);  // Slight delay for smoother readings
+}
