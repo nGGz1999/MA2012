@@ -1,0 +1,209 @@
+#include <Servo.h> 
+#define echoPin 8 // attach Arduino pin 8 to pin Echo
+#define trigPin 9 //attach Arduino pin 9 to pin Trig
+
+Servo myServo;  // create servo object to control a servo
+const int buttonPin = 2;   // the number of the pushbutton pin
+long duration; // variable for the duration of sound wave travel
+int distance; // variable for the distance measurement
+int soleno = 10;
+int optoswitch = 5;
+const int MCUPSoutput6 = 6; // for Communication with other MCU
+int toggleSwitchPin = 12;  // Toggle switch on pin 12
+bool toggleButtonState = false;  // State of the toggle switch
+
+int val;    // variable for servo position
+int buttonState;         // variable for reading the pushbutton status
+int optoState = 0;   // initial start value of the sensor status
+bool doorOpen = false;  // Track door state
+bool peopleIn = false; // Track people inside or not
+unsigned long doorOpenTime = 0;  // Track time when the door was opened
+bool doorClosingTimerStarted = false;  // Track if the door closing timer has started
+
+void setup() {
+  pinMode(buttonPin, INPUT);
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an OUTPUT
+  pinMode(echoPin, INPUT); // Sets the echoPin as an INPUT
+  pinMode(soleno, OUTPUT);
+  pinMode(optoswitch, INPUT);   // define pin as input
+  pinMode(MCUPSoutput6, OUTPUT);
+  pinMode(toggleSwitchPin, INPUT_PULLUP);  // Set toggle switch pin as input with pull-up resistor
+  myServo.attach(4);  // attaches the servo on pin 4 to the servo object
+  myServo.write(45);
+  digitalWrite(soleno, LOW);  // Unlock the door
+  Serial.begin(9600); // // Serial Communication is starting with 9600 of baudrate speed
+  Serial.println("Ultrasonic Sensor HC-SR04 Test"); // print some text in Serial Monitor
+  Serial.println("with Arduino UNO R3");
+}
+
+void loop() {
+  toggleButtonState = digitalRead(toggleSwitchPin) == LOW;
+  optoState = digitalRead(optoswitch);
+  Serial.print("Opto Switch State: ");
+  Serial.println(optoState);
+  Serial.print("PushButton State: ");
+  Serial.println(buttonState);
+
+    if (toggleButtonState) {
+    // If toggle switch is closed, turn off the whole circuit
+    Serial.println("Toggle switch is ON, turning off the circuit...");
+    digitalWrite(soleno, LOW);  // Ensure solenoid is deactivated
+    digitalWrite(MCUPSoutput6, LOW);  // Turn off MCU output
+    myServo.write(45);  // Set servo to initial position (closed door)
+    optoState = 0;   // initial start value of the sensor status
+    doorOpen = false;  // Track door state
+    peopleIn = false; // Track people inside or not
+    doorOpenTime = 0;  // Track time when the door was opened
+    doorClosingTimerStarted = false;  
+    return;  // Exit the loop to keep the circuit off
+  }
+
+  // Keep the door open if opto switch is HIGH
+  if (optoState == HIGH) {
+      if (!doorOpen) {
+          Serial.println("Emergency activated, unlocking and opening door...");
+          digitalWrite(soleno, LOW);  // Unlock the door
+          digitalWrite(MCUPSoutput6, HIGH);
+          delay(500);  // Small delay to ensure solenoid is deactivated before moving the servo
+          for (val = 45; val <= 135; val += 3) {
+            myServo.write(val);
+            delay(20);  // waits for the servo to get there
+          }  // Turn the servo to open the door
+          doorOpen = true;
+      }
+      // Keep the door open until the optoswitch changes to LOW
+      while (digitalRead(optoswitch) == HIGH) {
+          delay(100);  // Check the opto switch state periodically
+      }
+      optoState = LOW;
+      Serial.println("Door Closing");
+      for (val = 135; val >= 45; val -= 3) {
+        myServo.write(val);
+        delay(20);  // sets the servo position, waits for the servo to get there
+      }
+      doorOpenTime = millis();  // Record the time the door was opened
+      doorClosingTimerStarted = false;  // Reset the door closing timer when the button is used to open the door
+      buttonState = HIGH;
+      peopleIn = false;
+      doorOpen = false;
+  }
+  
+  else {
+    // read the state of the pushbutton value:
+    buttonState = digitalRead(buttonPin);
+    digitalWrite(MCUPSoutput6, LOW);
+
+    // Clears the trigPin condition
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+    // Reads the echoPin, returns the sound wave travel time in microseconds
+    duration = pulseIn(echoPin, HIGH);
+    // Calculating the distance
+    distance = duration * 0.034 / 2; // Speed of sound wave divided by 2 (go and back)
+    // Displays the distance on the Serial Monitor
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+
+    // Read the opto switch state
+
+    Serial.print("peopleIn State: ");
+    Serial.println(peopleIn);
+    Serial.print("doorOpen State: ");
+    Serial.println(doorOpen);
+
+    // Open the door if the ultrasonic sensor detects a human within 10 cm
+    if (distance < 10 && !doorOpen && !peopleIn) {
+      delay(200);
+      Serial.println("Human detected, unlocking and opening door...");
+      delay(500);  // Small delay to ensure solenoid is deactivated before moving the servo
+      for (val = 45; val <= 135; val += 3) {
+        myServo.write(val);
+        delay(20);  // waits for the servo to get there
+      }  // Turn the servo to open the door
+      doorOpen = true;
+      doorClosingTimerStarted = false;
+      delay(200);
+    }
+
+    // Start the timer if the door is open and distance > 10 cm
+    if (doorOpen && distance > 10 && !peopleIn) {
+      if (!doorClosingTimerStarted) {
+        doorOpenTime = millis();
+        doorClosingTimerStarted = true;
+      }
+    } else if (distance <= 10) {
+      // Reset the timer if human is detected again within 10 cm
+      doorClosingTimerStarted = false;
+    }
+
+    // Close the door if 10 seconds have passed since the distance is greater than 10 cm
+    if (doorOpen && doorClosingTimerStarted && millis() - doorOpenTime > 10000 && !peopleIn) {
+      delay(200);
+      Serial.println("Closing door after 10 seconds of no human detection...");
+      for (val = 135; val >= 45; val -= 3) {
+        myServo.write(val);
+        delay(20);  // sets the servo position, waits for the servo to get there
+      }
+      doorOpen = false;
+      doorClosingTimerStarted = false;
+      delay(200);
+    }
+
+    // Check push button state to toggle door state - open the door aft shower
+    if (buttonState == LOW && !doorOpen && peopleIn) {
+      delay(200);
+      Serial.println("Push button pressed, unlocking and opening door...");
+      digitalWrite(soleno, LOW);  // Unlock the door
+      delay(500);  // Small delay to ensure solenoid is deactivated before moving the servo
+      for (val = 45; val <= 135; val += 3) {
+        myServo.write(val);
+        delay(20);  // waits for the servo to get there
+      }  // Turn the servo to open the door
+      delay(5000);
+      Serial.println("Door Closing");
+      for (val = 135; val >= 45; val -= 3) {
+        myServo.write(val);
+        delay(20);  // sets the servo position, waits for the servo to get there
+      }
+      doorOpenTime = millis();  // Record the time the door was opened
+      doorClosingTimerStarted = false;  // Reset the door closing timer when the button is used to open the door
+      buttonState = HIGH;
+      peopleIn = false;
+      doorOpen = false;
+      delay(200);
+    }
+
+    // Check push button state to lock the door without moving the door as it's alr closed
+    if (buttonState == LOW && !doorOpen && !peopleIn) {
+      delay(200);
+      Serial.println("Push button pressed, closing and locking door...");
+      digitalWrite(soleno, HIGH);  // Lock the door
+      delay(5000);
+      peopleIn = true;
+      doorOpen = false;
+      doorClosingTimerStarted = false;
+      delay(200);
+    }
+
+    // Check push button state to close the door and lock it - close the door for shower
+    if (buttonState == LOW && doorOpen && !peopleIn) {
+      delay(200);
+      Serial.println("Push button pressed, closing and locking door...");
+      for (val = 135; val >= 45; val -= 3) {
+        myServo.write(val);
+        delay(20);  // sets the servo position, waits for the servo to get there
+      }
+      delay(2000);  // Wait for the door to close
+      digitalWrite(soleno, HIGH);  // Lock the door
+      peopleIn = true;
+      doorOpen = false;
+      doorClosingTimerStarted = false;
+      delay(200);
+    }
+  }
+}
